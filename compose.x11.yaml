@@ -1,0 +1,13 @@
+# Optional overlay for Linux desktops: show sketch windows on the host's X server
+# instead of the container's virtual display, so they can be clicked and dragged.
+#
+#   xhost +local:            # allow local containers to connect (undo: xhost -local:)
+#   docker compose -f compose.yaml -f compose.x11.yaml up
+#
+# With DISPLAY set, the container does not start Xvfb.
+services:
+  jupyterlab:
+    environment:
+      DISPLAY: ${DISPLAY:?DISPLAY must be set on the host}
+    volumes:
+      - /tmp/.X11-unix:/tmp/.X11-unix:ro

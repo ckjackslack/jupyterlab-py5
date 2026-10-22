@@ -1,0 +1,36 @@
+# JupyterLab with py5 at http://127.0.0.1:${JUPYTER_HOST_PORT:-8888}
+# Copy .env.example to .env to change the port, token, screen size or UID.
+name: jupyterlab-py5
+
+services:
+  jupyterlab:
+    build:
+      context: .
+      args:
+        NB_UID: ${NB_UID:-1000}
+    image: jupyterlab-py5:latest
+    ports:
+      # Loopback only by default; set JUPYTER_BIND=0.0.0.0 to expose on the LAN.
+      - "${JUPYTER_BIND:-127.0.0.1}:${JUPYTER_HOST_PORT:-8888}:8888"
+    environment:
+      # Empty -> Jupyter generates a random token and prints the login URL.
+      JUPYTER_TOKEN: ${JUPYTER_TOKEN:-}
+      PY5_SCREEN: ${PY5_SCREEN:-1280x1024x24}
+    volumes:
+      - ./notebooks:/home/py5/notebooks
+    shm_size: 256m
+    restart: unless-stopped
+
+  # Executes every notebook headlessly and exits non-zero on failure:
+  #   docker compose --profile test run --rm smoke
+  smoke:
+    profiles: ["test"]
+    image: jupyterlab-py5:latest
+    build:
+      context: .
+      args:
+        NB_UID: ${NB_UID:-1000}
+    volumes:
+      - ./notebooks:/home/py5/notebooks:ro
+    command: ["jupyterlab-py5", "run", "--timeout", "120", "/home/py5/notebooks"]
+    restart: "no"
