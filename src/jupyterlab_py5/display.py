@@ -106,11 +106,11 @@ class VirtualDisplay:
         *,
         xvfb: str | None = None,
         startup_timeout: float = 15.0,
-        which: Callable[[str], str | None] = shutil.which,
+        which: Callable[[str], str | None] | None = None,
     ) -> None:
         self.screen = parse_screen(screen) if isinstance(screen, str) else screen
         self.startup_timeout = startup_timeout
-        resolved = xvfb or which("Xvfb")
+        resolved = xvfb or (which or shutil.which)("Xvfb")
         if not resolved:
             raise DisplayError(
                 "no DISPLAY is set and Xvfb is not installed; install it "

@@ -1,48 +1,145 @@
 # jupyterlab-py5
 
-> **DRAFT — assessment only. TODO / to be finished.**
+Run [py5](https://py5coding.org/) (Processing for Python) sketches in JupyterLab — in Docker or
+locally — with a **headless virtual display**, so sketches that normally need a window also run on
+a server or in CI.
 
-## What this seems to be
+py5 drives the Java Processing libraries through JPype, so it needs a JDK. This project packages
+that stack as a reproducible Docker image and as a small installable helper (`jupyterlab-py5`) that
+starts a virtual display when no X server is present, launches JupyterLab, and executes notebooks
+headlessly.
 
-A Docker / docker-compose setup for running [py5](https://py5coding.org/) (Processing for
-CPython, which drives the Java Processing jars through JPype and therefore needs a JDK) inside
-JupyterLab, with the py5 Jupyter kernels installed and one example notebook
-(`base/code/Py5Example.ipynb`) that draws squares following the mouse and changes the fill
-colour on click.
+## Features
 
-## Current state (as found on `master`, April 2024)
+- **Docker image** on Python 3.13 + a Temurin JRE 21, with the `py5` and `py5bot` Jupyter kernels
+  and a virtual X display (Xvfb) started automatically — no host networking or `.Xauthority` mounts.
+- **`jupyterlab-py5` CLI** for use with or without Docker: start a lab, run notebooks headlessly,
+  scaffold a sketch, strip notebook outputs, and check the environment.
+- **Headless rendering**: both windowed sketches (`run_sketch()`) and static drawings (`py5bot`)
+  render against Xvfb, and every produced image can be exported to PNG — handy for CI smoke tests.
+- Three example notebooks covering interactive, static, and module-mode sketches.
 
-What is there:
+## Requirements
 
-- `base/Dockerfile` — `python:3.10` image, a very long apt list, poetry, `pip install -r
-  requirements.txt`, installs the `py5` and `py5bot` kernels, runs `jupyter lab`.
-- `docker-compose.yml` — builds `./base`, mounts `./base/code`, mounts the host's
-  `$HOME/.Xauthority`, `network_mode: host`.
-- `run.sh` — `docker-compose up`.
+- **Docker** (with Compose v2) for the container route — nothing else needed.
+- For the **local** route: Python ≥ 3.12, a **JDK/JRE 17+** (21 recommended), and **Xvfb**
+  (`apt install xvfb`) if the machine has no X server.
 
-What is broken or questionable (not run yet, read from the source):
+## Install (local)
 
-- `CMD [..., "--ip='*'", ...]` is exec form, so the single quotes reach Jupyter literally
-  (`'*'` is not a valid IP); it should be `--ip=0.0.0.0`.
-- `JAVA_OPTS` sets `-XX:MaxPermSize`, removed in Java 8, and `java.awt.headless=true`, which
-  contradicts `DISPLAY=:0`. JPype doesn't read `JAVA_OPTS` anyway, so the whole line is dead.
-- `DISPLAY=:0` with no X server started: `xvfb` is installed but never launched, so a
-  windowed sketch (`run_sketch()`) only works if the host's X server is reachable through
-  `network_mode: host` + the mounted `.Xauthority` — a Linux-desktop-only, machine-specific
-  assumption.
-- Poetry is installed from Debian's `python3-poetry` (built for the system Python, not the
-  image's `/usr/local` Python) and is used only as `poetry run pip install`; `pyproject.toml`
-  is an unfilled template (`your-project-name`, `you@example.com`).
-- `requirements.txt` is unpinned and pulls many unrelated libraries (`pygame`, `arcade`, `p5`,
-  `scikit-learn`, ...); the image also installs `texlive`, `gdb`, `nodejs`, autotools etc.
-  → very large, slow image.
-- Notebook lives in `base/code` but is mounted to `/opt/app/src` while Jupyter starts in
-  `/opt/app`; `version: '3.8'` in compose is obsolete.
-- No secrets. Personal/machine-specific bits: the `$HOME/.Xauthority` mount and host networking.
-- No tests, no README.
+```bash
+pip install -e .            # or: uv sync
+# optional: the heavier py5 extras (shapely, trimesh, matplotlib, …)
+pip install -e '.[extras]'
+```
 
-## TODO / to be finished
+Check everything is wired up:
 
-- Rebuild the image around a current Python + JDK, start Xvfb, show sketches in the notebook.
-- Make compose portable (no host network / Xauthority), configurable port/token.
-- Verify outside Docker by executing the notebook headlessly; add pytest.
+```bash
+jupyterlab-py5 doctor
+```
+
+```
+[  ok] python           3.13.16
+[  ok] java             Java 21
+[  ok] python packages  all importable
+[  ok] kernels          py5, py5bot, python3
+[  ok] display          no DISPLAY; will start Xvfb (/usr/bin/Xvfb)
+```
+
+## Usage
+
+### Docker
+
+```bash
+cp .env.example .env            # optional: change port, token, screen size, UID
+docker compose up               # JupyterLab at http://127.0.0.1:8888 (token printed on start)
+docker compose --profile test run --rm smoke   # execute every notebook headlessly, non-zero on failure
+```
+
+By default the port is bound to loopback only; set `JUPYTER_BIND=0.0.0.0` in `.env` to expose it
+on the LAN.
+
+### Local CLI
+
+```bash
+# Start JupyterLab; Xvfb is started automatically if DISPLAY is unset
+jupyterlab-py5 lab
+
+# Execute notebooks top-to-bottom and save every rendered frame (CI smoke test)
+jupyterlab-py5 run notebooks/ --images-dir frames/
+
+# Scaffold a new sketch notebook
+jupyterlab-py5 new "spiral study" --kernel py5 --size 600x600
+
+# Run any command inside a virtual display (e.g. a plain .py sketch)
+jupyterlab-py5 with-display -- python my_sketch.py
+
+# Strip outputs before committing
+jupyterlab-py5 clean notebooks/
+```
+
+Running `jupyterlab-py5 run notebooks/` here executes all three example notebooks and writes PNGs:
+
+```
+[ok  ] notebooks/01-interactive-sketch.ipynb (7.8s, 1 image(s))
+[ok  ] notebooks/02-static-drawing-py5bot.ipynb (4.3s, 2 image(s))
+[ok  ] notebooks/03-module-mode-render.ipynb (4.2s, 2 image(s))
+3/3 notebook(s) passed
+```
+
+## Configuration
+
+CLI flags take precedence over environment variables:
+
+| Variable | Used by | Meaning |
+|---|---|---|
+| `PY5_LAB_IP`, `PY5_LAB_PORT`, `PY5_LAB_ROOT` | `lab` | listen interface, port, notebook dir |
+| `JUPYTER_TOKEN` | `lab`, Docker | login token (random if unset) |
+| `PY5_SCREEN` | any display command | Xvfb screen as `WxHxDEPTH` (default `1280x1024x24`) |
+| `JUPYTER_HOST_PORT`, `JUPYTER_BIND`, `NB_UID` | Docker | host port, bind address, container user id |
+
+## Design
+
+- **`display.py`** — starts/stops an Xvfb process and sets `DISPLAY`; a no-op when a display
+  already exists.
+- **`java.py`** / **`doctor.py`** — locate a JDK and verify py5, the kernels and the display.
+- **`lab.py`** — build and launch the JupyterLab command inside a display.
+- **`notebooks.py`** — execute notebooks with nbclient and extract rendered images.
+- **`cli.py`** — the argparse front end (`lab`, `run`, `new`, `clean`, `doctor`, `with-display`,
+  `healthcheck`).
+
+Side effects (processes, the filesystem, the network) live at the edges; the rest is plain
+functions, which is what the test suite exercises.
+
+## Tests
+
+```bash
+pip install -e '.[dev]'
+pytest
+```
+
+Most tests are offline and fake the display/JDK/subprocess boundaries. Tests marked `integration`
+start a real Xvfb and execute real notebooks with py5; they skip automatically when a JDK, Xvfb or
+py5 is unavailable.
+
+## Modernised from the original
+
+The original was a single `Dockerfile` + `docker-compose.yml` proof of concept. Brought up to date:
+
+- `python:3.10` + a huge apt list + Poetry → slim **Python 3.13** image with a **Temurin JRE 21**
+  and **uv**; runtime libraries only.
+- Windowed-only, machine-specific display (`DISPLAY=:0`, host `network_mode`, mounted
+  `.Xauthority`) → **Xvfb started in-container**, portable Compose, loopback-bound port + token.
+- Dead `JAVA_OPTS`/`MaxPermSize` and the invalid `--ip='*'` → removed/fixed.
+- Unpinned template `pyproject.toml` → **PEP 621** packaging, pinned deps, ruff, a `hadolint`-clean
+  Dockerfile.
+
+## Known limitations
+
+- Only software OpenGL (Mesa) is available in the container, so `P2D`/`P3D` sketches render but
+  without GPU acceleration.
+- The live JupyterLab UI isn't verified by automated tests (the `run`/`doctor`/image paths are);
+  `healthcheck` is provided for liveness.
+- py5 and py5jupyter publish only alpha releases, so their versions are pinned to pre-release lower
+  bounds on purpose.
